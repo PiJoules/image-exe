@@ -105,6 +105,13 @@ class ImgManager(object):
 
         return s
 
+    def run(self):
+        from tempfile import NamedTemporaryFile
+        with NamedTemporaryFile() as f:
+            f.write(self.decode())
+            f.flush()
+            execfile(f.name)
+
 
 def get_args():
     from argparse import ArgumentParser
@@ -125,9 +132,7 @@ def main():
 
     img_man = ImgManager(img)
     img_man.encode(char_generator(args.filename))
-    s = img_man.decode()
-
-    print(s)
+    img_man.run()
 
     img.close()
 
