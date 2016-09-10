@@ -906,6 +906,337 @@ maybe_pyc_file(FILE *fp, const char* filename, const char* ext, int closeit)
     return 0;
 }
 
+
+/* My edits */
+#include <png.h>
+
+int ends_with(const char* str, const char* suffix){
+    if (!str || !suffix){
+        return 0;
+    }
+    size_t lenstr = strlen(str);
+    size_t lensuffix = strlen(suffix);
+    if (lensuffix >  lenstr)
+        return 0;
+    return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
+}
+
+
+void abort_(const char * s, ...)
+{
+        va_list args;
+        va_start(args, s);
+        vfprintf(stderr, s, args);
+        fprintf(stderr, "\n");
+        va_end(args);
+        abort();
+}
+
+
+typedef struct PngStruct PngStruct;
+struct PngStruct {
+    png_structp png_ptr;
+    png_infop info_ptr;
+    int width;
+    int height;
+    png_bytep* row_pointers;
+    png_byte color_type;
+    png_byte bit_depth;
+};
+
+
+PngStruct read_png_file(char* file_name)
+{
+        char header[8];    // 8 is the maximum size that can be checked
+
+        // My declarations
+        png_structp png_ptr;
+        png_infop info_ptr;
+        int width, height;
+        //int number_of_passes;
+        png_byte color_type, bit_depth;
+        png_bytep* row_pointers;
+        int y;
+
+        /* open file and test for it being a png */
+        FILE *fp = fopen(file_name, "rb");
+        if (!fp)
+                abort_("[read_png_file] File %s could not be opened for reading", file_name);
+        fread(header, 1, 8, fp);
+        if (png_sig_cmp((unsigned char*)header, 0, 8))
+                abort_("[read_png_file] File %s is not recognized as a PNG file", file_name);
+
+
+        /* initialize stuff */
+        png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+        if (!png_ptr)
+                abort_("[read_png_file] png_create_read_struct failed");
+
+        info_ptr = png_create_info_struct(png_ptr);
+        if (!info_ptr)
+                abort_("[read_png_file] png_create_info_struct failed");
+
+        if (setjmp(png_jmpbuf(png_ptr)))
+                abort_("[read_png_file] Error during init_io");
+
+        png_init_io(png_ptr, fp);
+        png_set_sig_bytes(png_ptr, 8);
+
+        png_read_info(png_ptr, info_ptr);
+
+        width = png_get_image_width(png_ptr, info_ptr);
+        height = png_get_image_height(png_ptr, info_ptr);
+        color_type = png_get_color_type(png_ptr, info_ptr);
+        bit_depth = png_get_bit_depth(png_ptr, info_ptr);
+
+        //number_of_passes = png_set_interlace_handling(png_ptr);
+        png_read_update_info(png_ptr, info_ptr);
+
+
+        /* read file */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                abort_("[read_png_file] Error during read_image");
+
+        row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * height);
+        for (y=0; y<height; y++)
+                row_pointers[y] = (png_byte*) malloc(png_get_rowbytes(png_ptr,info_ptr));
+
+        png_read_image(png_ptr, row_pointers);
+
+        PngStruct png;
+        png.png_ptr = png_ptr;
+        png.info_ptr = info_ptr;
+        png.width = width;
+        png.height = height;
+        png.row_pointers = row_pointers;
+        png.color_type = color_type;
+        png.bit_depth = bit_depth;
+
+        fclose(fp);
+        return png;
+}
+
+
+typedef struct ImgManager ImgManager;
+struct ImgManager {
+    PngStruct img;
+    int x, y, w, h;
+    int chunk_size;
+};
+
+
+typedef struct {
+    int x, y;
+} Coords;
+
+
+#define BYTE_LEN 8
+#define CHUNK_SIZE 2
+
+
+void init_img_manager(ImgManager* img_man, PngStruct png){
+    img_man->img = png;
+    img_man->x = 0;
+    img_man->y = 0;
+    img_man->w = png.width;
+    img_man->h = png.height;
+}
+
+
+Coords next_coords(ImgManager* img_man){
+    Coords coords = {-1, -1};
+    if (img_man->y >= img_man->h){
+        return coords;
+    }
+
+    if (img_man->x >= img_man->w){
+        img_man->x = 0;
+        img_man->y++;
+    }
+
+    coords.x = img_man->x;
+    coords.y = img_man->y;
+    img_man->x++;
+    return coords;
+}
+
+int ipow(int base, int exp)
+{
+    int result = 1;
+    while (exp)
+    {
+        if (exp & 1)
+            result *= base;
+        exp >>= 1;
+        base *= base;
+    }
+
+    return result;
+}
+
+
+char reverse_bits(char x){
+    char result;
+    int i;
+    char part;
+
+    result = 0;
+    for (i = 0; i < BYTE_LEN; i += CHUNK_SIZE){
+        part = (x >> i) & (ipow(2, CHUNK_SIZE) - 1);
+        result |= part << (BYTE_LEN - i - CHUNK_SIZE);
+    }
+    return result;
+}
+
+
+char inject_bits(char val, char bits){
+    return ((val << CHUNK_SIZE) | bits) & 0xff;
+}
+
+
+void apply_byte(ImgManager* self, char byte){
+    int i;
+    int x, y;
+    char rev;
+    char part;
+    int r, g, b;
+
+    for (i = 0; i < BYTE_LEN; i++){
+        Coords coords = next_coords(self);
+        if (coords.x == -1){
+            fprintf(stderr, "Ran out of space in image.\n");
+            return;
+        }
+
+        x = coords.x;
+        y = coords.y;
+
+        png_byte* row = self->img.row_pointers[y];
+        png_byte* ptr = &(row[x*4]);
+
+        r = ptr[0];
+        g = ptr[1];
+        b = ptr[2];
+
+        part = rev & (ipow(2, CHUNK_SIZE) - 1);
+        r = inject_bits(r, part);
+        rev = rev >> CHUNK_SIZE;
+
+        ptr[0] = r;
+        ptr[1] = g;
+        ptr[2] = b;
+    }
+}
+
+
+void encode(ImgManager* self, const char* filename){
+    FILE* fp = fopen(filename, "rb");
+    int c;
+    while ((c = fgetc(fp)) != EOF){
+        char c = fgetc(fp);
+        apply_byte(self, c);
+    }
+    apply_byte(self, '\0');
+    fclose(fp);
+}
+
+
+void process_file(PngStruct png, const char* filename)
+{
+        int x, y;
+
+        //if (png_get_color_type(png.png_ptr, png.info_ptr) == PNG_COLOR_TYPE_RGB)
+        //        abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
+        //               "(lacks the alpha channel)");
+
+        //if (png_get_color_type(png.png_ptr, png.info_ptr) != PNG_COLOR_TYPE_RGBA)
+        //        abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
+        //               PNG_COLOR_TYPE_RGBA, png_get_color_type(png.png_ptr, png.info_ptr));
+
+        printf("Reading %s ...\n", filename);
+        printf("")
+        //for (y=0; y< png.height; y++) {
+        //        png_byte* row = png.row_pointers[y];
+        //        for (x=0; x<png.width; x++) {
+        //                png_byte* ptr = &(row[x*4]);
+        //                //printf("Pixel at position [ %d - %d ] has RGB values: %d - %d - %d \n",
+        //                //       x, y, ptr[0], ptr[1], ptr[2]);
+        //                
+
+
+        //                //printf("Pixel at position [ %d - %d ] has RGBA values: %d - %d - %d - %d\n",
+        //                //       x, y, ptr[0], ptr[1], ptr[2], ptr[3]);
+
+        //                ///* set red value to 0 and green value to the blue one */
+        //                //ptr[0] = 0;
+        //                //ptr[1] = ptr[2];
+        //        }
+        //}
+}
+
+void write_png_file(char* file_name, PngStruct png)
+{
+        png_structp png_ptr;
+        png_infop info_ptr;
+        int y;
+
+        /* create file */
+        FILE *fp = fopen(file_name, "wb");
+        if (!fp)
+                abort_("[write_png_file] File %s could not be opened for writing", file_name);
+
+
+        /* initialize stuff */
+        png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+        if (!png_ptr)
+                abort_("[write_png_file] png_create_write_struct failed");
+
+        info_ptr = png_create_info_struct(png_ptr);
+        if (!info_ptr)
+                abort_("[write_png_file] png_create_info_struct failed");
+
+        if (setjmp(png_jmpbuf(png_ptr)))
+                abort_("[write_png_file] Error during init_io");
+
+        png_init_io(png_ptr, fp);
+
+
+        /* write header */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                abort_("[write_png_file] Error during writing header");
+
+        png_set_IHDR(png_ptr, info_ptr, png.width, png.height,
+                     png.bit_depth, png.color_type, PNG_INTERLACE_NONE,
+                     PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
+
+        png_write_info(png_ptr, info_ptr);
+
+
+        /* write bytes */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                abort_("[write_png_file] Error during writing bytes");
+
+        png_write_image(png_ptr, png.row_pointers);
+
+
+        /* end write */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                abort_("[write_png_file] Error during end of write");
+
+        png_write_end(png_ptr, NULL);
+
+        /* cleanup heap allocation */
+        //for (y=0; y<png.height; y++)
+        //        free(png.row_pointers[y]);
+        //free(png.row_pointers);
+
+        fclose(fp);
+}
+
+/* End my edits */
+
 int
 PyRun_SimpleFileExFlags(FILE *fp, const char *filename, int closeit,
                         PyCompilerFlags *flags)
@@ -944,7 +1275,20 @@ PyRun_SimpleFileExFlags(FILE *fp, const char *filename, int closeit,
         if (strcmp(ext, ".pyo") == 0)
             Py_OptimizeFlag = 1;
         v = run_pyc_file(fp, filename, d, d, flags);
-    } else {
+    } 
+    else if (ends_with(filename, ".png")){
+        printf("checking image file...\n");
+        PngStruct png = read_png_file(filename);
+
+        ImgManager img_man;
+        init_img_manager(&img_man, png);
+        encode(&img_man, "/home/pijoules/projects/image-exe/samples/hello_world.py");
+
+        //process_file(png, filename);
+        write_png_file("/mnt/c/Users/Pi\ Joules/Documents/image-exe/pythonlogo2.png", img_man.img);
+        return 0;
+    }
+    else {
         v = PyRun_FileExFlags(fp, filename, Py_file_input, d, d,
                               closeit, flags);
     }

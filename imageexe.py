@@ -66,8 +66,8 @@ class ImgManager(object):
             x, y = coords
             r, g, b = pixdata[x, y]
 
-            b = rev_data & (2**n - 1)
-            r = inject_bits(r, b)
+            part = rev_data & (2**n - 1)
+            r = inject_bits(r, part)
             rev_data = rev_data >> n
 
             pixdata[x, y] = (r, g, b)
@@ -108,7 +108,9 @@ class ImgManager(object):
     def run(self):
         from tempfile import NamedTemporaryFile
         with NamedTemporaryFile() as f:
-            f.write(self.decode())
+            s = self.decode()
+            print(map(ord, s))
+            f.write(s)
             f.flush()
             execfile(f.name)
 
@@ -117,8 +119,8 @@ def get_args():
     from argparse import ArgumentParser
     parser = ArgumentParser()
 
-    parser.add_argument("filename")
-    parser.add_argument("img")
+    parser.add_argument("-f", "--filename")
+    parser.add_argument("-i", "--img")
 
     return parser.parse_args()
 
@@ -131,7 +133,8 @@ def main():
     img.convert("RGBA")
 
     img_man = ImgManager(img)
-    img_man.encode(char_generator(args.filename))
+    if args.filename:
+        img_man.encode(char_generator(args.filename))
     img_man.run()
 
     img.close()
