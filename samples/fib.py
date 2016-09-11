@@ -1,5 +1,3 @@
-from fib2 import fib2
-
 def fib(n):
     if n <= 0:
         return 0
@@ -11,4 +9,3 @@ def fib(n):
 
 
 print(fib(10))
-print(fib2(10))
