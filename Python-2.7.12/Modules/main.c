@@ -40,7 +40,7 @@ static char **orig_argv;
 static int  orig_argc;
 
 /* command line options */
-#define BASE_OPTS "3bBc:dEhiJm:OQ:RsStuUvVW:xX?"
+#define BASE_OPTS "p:3bBc:dEhiJm:OQ:RsStuUvVW:xX?"
 
 #ifndef RISCOS
 #define PROGRAM_OPTS BASE_OPTS
@@ -111,6 +111,9 @@ PYTHONHASHSEED: if this variable is set to 'random', the effect is the same\n\
    str, bytes and datetime objects.  It can also be set to an integer\n\
    in the range [0,4294967295] to get hash values with a predictable seed.\n\
 ";
+
+
+char* dest_pic = NULL;
 
 
 static int
@@ -314,6 +317,15 @@ Py_Main(int argc, char **argv)
                 Py_FatalError(
                    "not enough memory to copy -m argument");
             strcpy(module, _PyOS_optarg);
+            break;
+        }
+
+        if (c == 'p'){
+            dest_pic = (char *)malloc(strlen(_PyOS_optarg) + 2);
+            if (dest_pic == NULL)
+                Py_FatalError(
+                   "not enough memory to copy -p argument");
+            strcpy(dest_pic, _PyOS_optarg);
             break;
         }
 

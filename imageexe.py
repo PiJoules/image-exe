@@ -107,12 +107,16 @@ class ImgManager(object):
 
     def run(self):
         from tempfile import NamedTemporaryFile
+        import subprocess
         with NamedTemporaryFile() as f:
             s = self.decode()
-            print(map(ord, s))
             f.write(s)
             f.flush()
-            execfile(f.name)
+            #execfile(f.name)
+            # For some reason, execfile does not recognize user defined
+            # functions in the file.
+            subprocess.call("python {}".format(f.name).split())
+            #exec s
 
 
 def get_args():

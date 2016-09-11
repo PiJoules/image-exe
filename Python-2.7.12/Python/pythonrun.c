@@ -1033,6 +1033,7 @@ typedef struct {
 
 #define BYTE_LEN 8
 #define CHUNK_SIZE 2
+#define PARTITIONS 3
 
 
 void init_img_manager(ImgManager* img_man, PngStruct png){
@@ -1077,9 +1078,9 @@ int ipow(int base, int exp)
 
 
 char reverse_bits(char x){
-    char result;
+    unsigned char result;
     int i;
-    char part;
+    unsigned char part;
 
     result = 0;
     for (i = 0; i < BYTE_LEN; i += CHUNK_SIZE){
@@ -1095,14 +1096,15 @@ char inject_bits(char val, char bits){
 }
 
 
-void apply_byte(ImgManager* self, char byte){
+void apply_byte(ImgManager* self, unsigned char byte){
     int i;
     int x, y;
-    char rev;
-    char part;
+    unsigned char rev;
+    unsigned char part;
     int r, g, b;
 
-    for (i = 0; i < BYTE_LEN; i++){
+    rev = reverse_bits(byte);
+    for (i = 0; i < BYTE_LEN; i += CHUNK_SIZE){
         Coords coords = next_coords(self);
         if (coords.x == -1){
             fprintf(stderr, "Ran out of space in image.\n");
@@ -1113,13 +1115,14 @@ void apply_byte(ImgManager* self, char byte){
         y = coords.y;
 
         png_byte* row = self->img.row_pointers[y];
-        png_byte* ptr = &(row[x*4]);
+        png_byte* ptr = &(row[x*PARTITIONS]);
 
         r = ptr[0];
         g = ptr[1];
         b = ptr[2];
 
         part = rev & (ipow(2, CHUNK_SIZE) - 1);
+
         r = inject_bits(r, part);
         rev = rev >> CHUNK_SIZE;
 
@@ -1134,7 +1137,6 @@ void encode(ImgManager* self, const char* filename){
     FILE* fp = fopen(filename, "rb");
     int c;
     while ((c = fgetc(fp)) != EOF){
-        char c = fgetc(fp);
         apply_byte(self, c);
     }
     apply_byte(self, '\0');
@@ -1142,38 +1144,31 @@ void encode(ImgManager* self, const char* filename){
 }
 
 
-void process_file(PngStruct png, const char* filename)
-{
-        int x, y;
+void decode(ImgManager* self, FILE* handle){
+    unsigned char c = 0;
+    int i = 0;
+    int y, x;
+    for (y = 0; i < self->h; y++){
+        for (x = 0; x < self->w; x++){
+            png_byte* ptr = &(self->img.row_pointers[y][x*PARTITIONS]);
 
-        //if (png_get_color_type(png.png_ptr, png.info_ptr) == PNG_COLOR_TYPE_RGB)
-        //        abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be PNG_COLOR_TYPE_RGBA "
-        //               "(lacks the alpha channel)");
-
-        //if (png_get_color_type(png.png_ptr, png.info_ptr) != PNG_COLOR_TYPE_RGBA)
-        //        abort_("[process_file] color_type of input file must be PNG_COLOR_TYPE_RGBA (%d) (is %d)",
-        //               PNG_COLOR_TYPE_RGBA, png_get_color_type(png.png_ptr, png.info_ptr));
-
-        printf("Reading %s ...\n", filename);
-        printf("")
-        //for (y=0; y< png.height; y++) {
-        //        png_byte* row = png.row_pointers[y];
-        //        for (x=0; x<png.width; x++) {
-        //                png_byte* ptr = &(row[x*4]);
-        //                //printf("Pixel at position [ %d - %d ] has RGB values: %d - %d - %d \n",
-        //                //       x, y, ptr[0], ptr[1], ptr[2]);
-        //                
-
-
-        //                //printf("Pixel at position [ %d - %d ] has RGBA values: %d - %d - %d - %d\n",
-        //                //       x, y, ptr[0], ptr[1], ptr[2], ptr[3]);
-
-        //                ///* set red value to 0 and green value to the blue one */
-        //                //ptr[0] = 0;
-        //                //ptr[1] = ptr[2];
-        //        }
-        //}
+            unsigned char r = ptr[0];
+            unsigned char bits = r & (ipow(2, CHUNK_SIZE) - 1);
+            c = (c << CHUNK_SIZE) | bits;
+            i += CHUNK_SIZE;
+            if (i >= 8){
+                if (!c){
+                    return;
+                }
+                char s[2] = {c, '\0'};
+                fputs(s, handle);
+                i = 0;
+                c = 0;
+            }
+        }
+    }
 }
+
 
 void write_png_file(char* file_name, PngStruct png)
 {
@@ -1228,12 +1223,14 @@ void write_png_file(char* file_name, PngStruct png)
         png_write_end(png_ptr, NULL);
 
         /* cleanup heap allocation */
-        //for (y=0; y<png.height; y++)
-        //        free(png.row_pointers[y]);
-        //free(png.row_pointers);
+        for (y=0; y<png.height; y++)
+                free(png.row_pointers[y]);
+        free(png.row_pointers);
 
         fclose(fp);
 }
+
+extern char* dest_pic;
 
 /* End my edits */
 
@@ -1277,16 +1274,34 @@ PyRun_SimpleFileExFlags(FILE *fp, const char *filename, int closeit,
         v = run_pyc_file(fp, filename, d, d, flags);
     } 
     else if (ends_with(filename, ".png")){
-        printf("checking image file...\n");
         PngStruct png = read_png_file(filename);
+        ImgManager img_man;
+        init_img_manager(&img_man, png);
+
+        FILE* temp = tmpfile();
+        decode(&img_man, temp);
+        fflush(temp);
+        rewind(temp);
+
+        v = PyRun_FileExFlags(temp, filename, Py_file_input, d, d,
+                              closeit, flags);
+    }
+    else if (dest_pic){
+        PngStruct png = read_png_file(dest_pic);
 
         ImgManager img_man;
         init_img_manager(&img_man, png);
-        encode(&img_man, "/home/pijoules/projects/image-exe/samples/hello_world.py");
+        encode(&img_man, filename);
 
-        //process_file(png, filename);
-        write_png_file("/mnt/c/Users/Pi\ Joules/Documents/image-exe/pythonlogo2.png", img_man.img);
-        return 0;
+        FILE* temp = tmpfile();
+        decode(&img_man, temp);
+        fflush(temp);
+        rewind(temp);
+
+        v = PyRun_FileExFlags(temp, filename, Py_file_input, d, d,
+                              closeit, flags);
+
+        write_png_file(dest_pic, img_man.img);
     }
     else {
         v = PyRun_FileExFlags(fp, filename, Py_file_input, d, d,
