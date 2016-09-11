@@ -16,6 +16,7 @@ $ ./python -p myimage.png samples/fib.py
 55  # Runs normally, but also saves the code in the image
 $ ./python myimage.png
 55
+```
 
 
 ## Limitations
